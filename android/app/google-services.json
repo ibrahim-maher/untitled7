@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "251119518452",
+    "firebase_url": "https://freight-transport-f8a55-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "freight-transport-f8a55",
+    "storage_bucket": "freight-transport-f8a55.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:251119518452:android:ed34fa54a5ad6cee0614a1",
+        "android_client_info": {
+          "package_name": "com.example.freight"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "251119518452-6gajqifir07r4cps26ano5284esnvac5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCpqNP6dP0TGJxLzsxmeyb1L3OALQIdUTM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "251119518452-6gajqifir07r4cps26ano5284esnvac5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
