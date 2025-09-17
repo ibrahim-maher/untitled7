@@ -14,6 +14,8 @@ import 'app/theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await GetStorage.init();
+
 
   try {
     // Initialize Firebase with explicit options
