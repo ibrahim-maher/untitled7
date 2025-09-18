@@ -26,7 +26,7 @@ class SplashController extends GetxController {
       // Check if user is logged in
       if (_authController.isLoggedIn) {
         print('SplashController: Navigating to HOME');
-        Get.offAllNamed(Routes.HOME);
+        Get.offAllNamed(Routes.MAIN);
       } else if (_appController.isFirstTime.value) {
         // Show onboarding for first-time users
         print('SplashController: Navigating to ONBOARDING');

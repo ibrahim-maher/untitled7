@@ -42,7 +42,7 @@ class QuickStatsSection extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            l10n.quickOverview ?? 'Quick Overview',
+                            l10n.quickOverview,
                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: Theme.of(context).colorScheme.onSurface,
@@ -103,7 +103,7 @@ class QuickStatsSection extends StatelessWidget {
                         children: [
                           _buildStatCard(
                             context: context,
-                            title: l10n.totalShipments ?? 'Total',
+                            title: l10n.totalShipments,
                             value: _formatNumber(stats.totalShipments),
                             icon: Icons.local_shipping,
                             color: Theme.of(context).colorScheme.primary,
@@ -111,7 +111,7 @@ class QuickStatsSection extends StatelessWidget {
                           ),
                           _buildStatCard(
                             context: context,
-                            title: l10n.activeShipments ?? 'Active',
+                            title: l10n.activeShipments,
                             value: _formatNumber(stats.activeShipments),
                             icon: Icons.pending_actions,
                             color: Theme.of(context).extension<AppColors>()?.warning ?? AppTheme.warningColor,
@@ -119,7 +119,7 @@ class QuickStatsSection extends StatelessWidget {
                           ),
                           _buildStatCard(
                             context: context,
-                            title: l10n.completedShipments ?? 'Done',
+                            title: l10n.completedShipments,
                             value: _formatNumber(stats.completedShipments),
                             icon: Icons.check_circle,
                             color: Theme.of(context).extension<AppColors>()?.success ?? AppTheme.successColor,
@@ -127,7 +127,7 @@ class QuickStatsSection extends StatelessWidget {
                           ),
                           _buildStatCard(
                             context: context,
-                            title: l10n.totalSavings ?? 'Savings',
+                            title: l10n.totalSavings,
                             value: '₹${_formatCurrency(stats.totalSavings)}',
                             icon: Icons.savings,
                             color: Theme.of(context).colorScheme.tertiary,

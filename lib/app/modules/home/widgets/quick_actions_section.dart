@@ -24,37 +24,37 @@ class QuickActionsSection extends StatelessWidget {
     final actions = [
       {
         'icon': Icons.add_box,
-        'title': "postLoad", // Use localization
+        'title': l10n.postLoad,
         'action': 'post_load',
         'color': colorScheme.primary,
       },
       {
         'icon': Icons.search,
-        'title': "findTrucks", // Use localization
+        'title': l10n.findTrucks,
         'action': 'search_trucks',
         'color': colorScheme.secondary,
       },
       {
         'icon': Icons.track_changes,
-        'title': "track", // Use localization
+        'title': l10n.track,
         'action': 'track_shipment',
         'color': appColors?.warning ?? colorScheme.tertiary,
       },
       {
         'icon': Icons.gavel,
-        'title': "bidding", // Use localization
+        'title': l10n.bidding,
         'action': 'bidding',
         'color': colorScheme.tertiary,
       },
       {
         'icon': Icons.payment,
-        'title': "payments", // Use localization
+        'title': l10n.payments,
         'action': 'payments',
         'color': appColors?.error ?? colorScheme.error,
       },
       {
         'icon': Icons.support_agent,
-        'title': "support", // Use localization
+        'title': l10n.support,
         'action': 'support',
         'color': appColors?.info ?? colorScheme.primary,
       },
@@ -70,7 +70,7 @@ class QuickActionsSection extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  "Quick Actions", // Use localization
+                  l10n.quickActions,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: colorScheme.onSurface, // Use theme color
@@ -82,7 +82,7 @@ class QuickActionsSection extends StatelessWidget {
                     color: colorScheme.primary,
                   ),
                   label: Text(
-                    "", // Use localization
+                    l10n.viewAll,
                     style: TextStyle(
                       color: colorScheme.primary,
                     ),

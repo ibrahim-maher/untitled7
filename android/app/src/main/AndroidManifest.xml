@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Internet permission -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -16,9 +17,15 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <application
-        android:label="untitled7"
+        android:label="freight"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyAXrI09P-BQ18CrSHhqoLxN-z48vuAUwl4"/>
+
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

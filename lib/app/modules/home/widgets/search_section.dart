@@ -24,7 +24,7 @@ class SearchSection extends StatelessWidget {
           children: [
             // Main search bar
             CustomTextField(
-              hint: 'Search loads, trucks, or locations...',
+              hint: l10n.searchLoadsTrucksLocations,
               prefixIcon: Icon(
                 Icons.search,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -68,7 +68,7 @@ class SearchSection extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'Route Selection',
+                        l10n.routeSelection,
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: Theme.of(context).colorScheme.primary,
@@ -81,7 +81,7 @@ class SearchSection extends StatelessWidget {
                           ? TextButton(
                         onPressed: _clearAllLocations,
                         child: Text(
-                          'Clear All',
+                          l10n.clearAll,
                           style: TextStyle(
                             color: Colors.grey[600],
                             fontSize: 12,
@@ -103,7 +103,7 @@ class SearchSection extends StatelessWidget {
                           context,
                           isPickup: true,
                           icon: Icons.location_on_outlined,
-                          hint: 'From location',
+                          hint: l10n.fromLocation,
                           selectedLocation: controller.pickupLocation,
                           isSelected: controller.isPickupLocationSelected,
                           onTap: () => _handleLocationSelection(context, true),
@@ -148,7 +148,7 @@ class SearchSection extends StatelessWidget {
                           context,
                           isPickup: false,
                           icon: Icons.location_on,
-                          hint: 'To location',
+                          hint: l10n.toLocation,
                           selectedLocation: controller.deliveryLocation,
                           isSelected: controller.isDeliveryLocationSelected,
                           onTap: () => _handleLocationSelection(context, false),
@@ -176,7 +176,7 @@ class SearchSection extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Route ready! Find trucks for this route.',
+                            l10n.routeReady,
                             style: TextStyle(
                               color: Colors.green[700],
                               fontSize: 12,
@@ -191,7 +191,7 @@ class SearchSection extends StatelessWidget {
                                 horizontal: 12, vertical: 4),
                           ),
                           child: Text(
-                            'Find Trucks',
+                            l10n.findTrucks,
                             style: TextStyle(
                               color: Colors.green[700],
                               fontSize: 12,
@@ -280,7 +280,7 @@ class SearchSection extends StatelessWidget {
             if (!isSelected.value) ...[
               const SizedBox(height: 4),
               Text(
-                'Tap to select',
+                l10n.tapToSelect,
                 style: TextStyle(
                   fontSize: 11,
                   color: Colors.grey[500],

@@ -24,24 +24,153 @@ class HomeBottomNavigation extends StatelessWidget {
       unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant,
       backgroundColor: Theme.of(context).colorScheme.surface,
       elevation: 8,
+      selectedFontSize: 12,
+      unselectedFontSize: 12,
       items: [
+        // Home Tab
         BottomNavigationBarItem(
           icon: const Icon(Icons.home),
+          activeIcon: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              Icons.home,
+              color: Theme.of(context).primaryColor,
+            ),
+          ),
           label: l10n.home,
         ),
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.local_shipping),
+
+        // Shipments Tab with Badge
+        BottomNavigationBarItem(
+          icon: _buildIconWithBadge(
+            Icons.local_shipping,
+            controller.activeShipments.length,
+            Colors.red,
+            context,
+          ),
+          activeIcon: _buildActiveIconWithBadge(
+            Icons.local_shipping,
+            controller.activeShipments.length,
+            context,
+          ),
           label: 'Shipments',
         ),
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.gavel),
-          label: 'Bidding',
+
+        // Bidding Tab with Badge
+        BottomNavigationBarItem(
+          icon: _buildIconWithBadge(
+            Icons.gavel,
+            controller.activeBids.length,
+            Colors.orange,
+            context,
+          ),
+          activeIcon: _buildActiveIconWithBadge(
+            Icons.gavel,
+            controller.activeBids.length,
+            context,
+          ),
+          label: l10n.bidding ?? 'Bidding',
         ),
+
+        // Profile Tab
         BottomNavigationBarItem(
           icon: const Icon(Icons.account_circle),
+          activeIcon: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              Icons.account_circle,
+              color: Theme.of(context).primaryColor,
+            ),
+          ),
           label: l10n.profile,
         ),
       ],
     ));
+  }
+
+  Widget _buildIconWithBadge(IconData icon, int count, Color badgeColor, BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(icon),
+        if (count > 0)
+          Positioned(
+            right: -6,
+            top: -6,
+            child: Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: badgeColor,
+                shape: BoxShape.circle,
+              ),
+              constraints: const BoxConstraints(
+                minWidth: 16,
+                minHeight: 16,
+              ),
+              child: Text(
+                count > 99 ? '99+' : '$count',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildActiveIconWithBadge(IconData icon, int count, BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).primaryColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Icon(
+            icon,
+            color: Theme.of(context).primaryColor,
+          ),
+          if (count > 0)
+            Positioned(
+              right: -6,
+              top: -6,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  shape: BoxShape.circle,
+                ),
+                constraints: const BoxConstraints(
+                  minWidth: 12,
+                  minHeight: 12,
+                ),
+                child: Text(
+                  count > 99 ? '99+' : '$count',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

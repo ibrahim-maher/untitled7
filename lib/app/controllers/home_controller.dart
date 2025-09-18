@@ -3,9 +3,10 @@ import 'package:get/get.dart';
 import 'auth_controller.dart';
 import '../data/models/LoadModel.dart';
 import '../routes/app_pages.dart';
-
 import '../services/firestore_service.dart';
 import 'dart:async';
+
+import 'main_controller.dart';
 
 class HomeController extends GetxController {
   final AuthController _authController = Get.find<AuthController>();
@@ -16,6 +17,7 @@ class HomeController extends GetxController {
   var currentTabIndex = 0.obs;
   var activeShipments = <ShipmentModel>[].obs;
   var recentLoads = <LoadModel>[].obs;
+  var activeBids = <BidModel>[].obs;
   var quickStats = Rx<QuickStats?>(null);
   var notifications = <Map<String, dynamic>>[].obs;
   var unreadNotificationsCount = 0.obs;
@@ -35,6 +37,7 @@ class HomeController extends GetxController {
   // Streams
   StreamSubscription? _activeShipmentsSubscription;
   StreamSubscription? _recentLoadsSubscription;
+  StreamSubscription? _activeBidsSubscription;
 
   String get userName => _authController.currentUser.value?.name ?? 'User';
   String get userEmail => _authController.currentUser.value?.email ?? '';
@@ -50,6 +53,7 @@ class HomeController extends GetxController {
   void onClose() {
     _activeShipmentsSubscription?.cancel();
     _recentLoadsSubscription?.cancel();
+    _activeBidsSubscription?.cancel();
     super.onClose();
   }
 
@@ -65,7 +69,6 @@ class HomeController extends GetxController {
 
       // Load other data
       await _loadRecentLoads();
-
     } catch (e) {
       print('Error initializing home data: $e');
       _showErrorSnackbar('Failed to load dashboard data');
@@ -94,6 +97,16 @@ class HomeController extends GetxController {
         print('Error in loads stream: $error');
       },
     );
+
+    // Listen to active bids in real-time
+    _activeBidsSubscription = FirestoreService.getActiveBidsStream().listen(
+          (bids) {
+        activeBids.value = bids;
+      },
+      onError: (error) {
+        print('Error in active bids stream: $error');
+      },
+    );
   }
 
   Future<void> _loadQuickStats() async {
@@ -107,6 +120,9 @@ class HomeController extends GetxController {
         totalSavings: stats['totalSavings'] ?? 0.0,
         monthlyShipments: stats['monthlyShipments'] ?? 0,
         averageRating: stats['averageRating'] ?? 0.0,
+        totalLoads: stats['totalLoads'] ?? 0,
+        activeBids: stats['activeBids'] ?? 0,
+        pendingBids: stats['pendingBids'] ?? 0,
       );
     } catch (e) {
       print('Error loading quick stats: $e');
@@ -136,24 +152,14 @@ class HomeController extends GetxController {
     }
   }
 
-  // UPDATED: Navigation methods with proper route constants
+  // Navigation methods
   void onTabChanged(int index) {
-    currentTabIndex.value = index;
-    switch (index) {
-      case 0:
-      // Home - already here
-        break;
-      case 1:
-        Get.offNamed(Routes.SHIPMENTS);
-        break;
-      case 2:
-        Get.offNamed(Routes.BIDDING);
-        break;
-      case 3:
-        Get.offNamed(Routes.PROFILE);
-        break;
+    if (Get.isRegistered<MainController>()) {
+      final mainController = Get.find<MainController>();
+      mainController.onTabChanged(index);
     }
   }
+
 
   void navigateToPostLoad() {
     Get.toNamed(Routes.POST_LOAD);
@@ -168,9 +174,12 @@ class HomeController extends GetxController {
   }
 
   void navigateToShipments() {
-    Get.toNamed(Routes.SHIPMENTS);
+    Get.toNamed(Routes.MAIN);
+    if (Get.isRegistered<MainController>()) {
+      final mainController = Get.find<MainController>();
+      mainController.onTabChanged(1);
+    }
   }
-
   void navigateToTrackShipment(String shipmentId) {
     Get.toNamed(Routes.TRACK_SHIPMENT, parameters: {'id': shipmentId});
   }
@@ -180,8 +189,13 @@ class HomeController extends GetxController {
   }
 
   void navigateToProfile() {
-    Get.toNamed(Routes.PROFILE);
+    Get.toNamed(Routes.MAIN);
+    if (Get.isRegistered<MainController>()) {
+      final mainController = Get.find<MainController>();
+      mainController.onTabChanged(3);
+    }
   }
+
 
   void navigateToSettings() {
     Get.toNamed(Routes.SETTINGS);
@@ -192,7 +206,11 @@ class HomeController extends GetxController {
   }
 
   void navigateToBidding() {
-    Get.toNamed(Routes.BIDDING);
+    Get.toNamed(Routes.MAIN);
+    if (Get.isRegistered<MainController>()) {
+      final mainController = Get.find<MainController>();
+      mainController.onTabChanged(2);
+    }
   }
 
   void navigateToPayments() {
@@ -201,6 +219,19 @@ class HomeController extends GetxController {
 
   void navigateToNotifications() {
     Get.toNamed(Routes.NOTIFICATIONS);
+  }
+
+  // Bid-related navigation methods
+  void navigateToBidDetails(String bidId) {
+    Get.toNamed(Routes.BID_DETAILS, parameters: {'id': bidId});
+  }
+
+  void navigateToMyBids() {
+    Get.toNamed(Routes.MY_BIDS);
+  }
+
+  void navigateToAvailableLoads() {
+    Get.toNamed(Routes.AVAILABLE_LOADS);
   }
 
   // Quick actions
@@ -224,6 +255,12 @@ class HomeController extends GetxController {
         break;
       case 'bidding':
         navigateToBidding();
+        break;
+      case 'my_bids':
+        navigateToMyBids();
+        break;
+      case 'available_loads':
+        navigateToAvailableLoads();
         break;
       case 'payments':
         navigateToPayments();
@@ -269,7 +306,6 @@ class HomeController extends GetxController {
 
   void _saveToRecentLocations(String address, Map<String, double>? coordinates, bool isPickup) {
     // In production, save to local storage or user preferences
-    // For now, just update the observable list if you have one
     print('Saving location: $address (${isPickup ? 'Pickup' : 'Delivery'})');
   }
 
@@ -305,16 +341,11 @@ class HomeController extends GetxController {
       isLoading.value = true;
       final searchResults = await FirestoreService.searchLoads(query);
 
-      // For now, just show a snackbar with results count
       Get.snackbar(
         'Search Results',
         'Found ${searchResults.length} loads matching "$query"',
         snackPosition: SnackPosition.BOTTOM,
       );
-
-      // You can navigate to a search results page here
-      // Get.toNamed(Routes.SEARCH_RESULTS, arguments: searchResults);
-
     } catch (e) {
       print('Error performing search: $e');
       _showErrorSnackbar('Search failed');
@@ -325,7 +356,6 @@ class HomeController extends GetxController {
 
   void onLocationChanged(String location) {
     selectedLocation.value = location;
-    // You can implement location-based filtering here
   }
 
   // Refresh data
@@ -345,7 +375,6 @@ class HomeController extends GetxController {
         snackPosition: SnackPosition.BOTTOM,
         duration: const Duration(seconds: 2),
       );
-
     } catch (e) {
       print('Error refreshing data: $e');
       _showErrorSnackbar('Failed to refresh data');
@@ -419,8 +448,6 @@ class HomeController extends GetxController {
           ElevatedButton(
             onPressed: () {
               Get.back();
-              // Implement actual emergency call functionality
-              // You can use url_launcher to make a phone call
               Get.snackbar(
                 'Emergency Support',
                 'Connecting to emergency support...',
@@ -442,7 +469,7 @@ class HomeController extends GetxController {
     // Mark as read
     if (!(notification['isRead'] ?? false)) {
       await FirestoreService.markNotificationAsRead(notification['id']);
-      await _loadNotifications(); // Refresh notifications
+      await _loadNotifications();
     }
 
     // Handle notification action based on type
@@ -460,11 +487,25 @@ class HomeController extends GetxController {
           navigateToLoadDetails(data['loadId']);
         }
         break;
+      case 'bid_accepted':
+        if (data['bidId'] != null) {
+          navigateToBidDetails(data['bidId']);
+        }
+        break;
+      case 'bid_rejected':
+        if (data['bidId'] != null) {
+          navigateToBidDetails(data['bidId']);
+        }
+        break;
+      case 'new_load_available':
+        if (data['loadId'] != null) {
+          navigateToLoadDetails(data['loadId']);
+        }
+        break;
       case 'payment_received':
         navigateToPayments();
         break;
       default:
-      // Handle other notification types
         break;
     }
   }
@@ -476,6 +517,18 @@ class HomeController extends GetxController {
 
   void onShipmentCardTapped(ShipmentModel shipment) {
     navigateToTrackShipment(shipment.id);
+  }
+
+  // Bid management actions
+  void onBidCardTapped(BidModel bid) {
+    navigateToBidDetails(bid.id);
+  }
+
+  void onBidStatusChanged(String bidId, BidStatus newStatus) {
+    final index = activeBids.indexWhere((bid) => bid.id == bidId);
+    if (index != -1) {
+      activeBids[index] = activeBids[index].copyWith(status: newStatus);
+    }
   }
 
   // Quick load posting
@@ -494,7 +547,6 @@ class HomeController extends GetxController {
           TextButton(
             onPressed: () {
               Get.back();
-              // Show templates dialog or navigate to templates
               navigateToPostLoad();
             },
             child: const Text('Use Template'),
@@ -511,7 +563,37 @@ class HomeController extends GetxController {
     );
   }
 
-  // NEW: Load management methods
+  // Quick bid actions
+  void showQuickBidDialog() {
+    Get.dialog(
+      AlertDialog(
+        title: const Text('Quick Bid Actions'),
+        content: const Text('What would you like to do?'),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Get.back();
+              navigateToAvailableLoads();
+            },
+            child: const Text('Browse Loads'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Get.back();
+              navigateToMyBids();
+            },
+            child: const Text('My Bids'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Load management methods
   void viewAllCreatedLoads() {
     navigateToCreatedLoads();
   }
@@ -546,7 +628,7 @@ class HomeController extends GetxController {
 
         if (success) {
           _showSuccessSnackbar('Load deleted successfully');
-          await _loadRecentLoads(); // Refresh the list
+          await _loadRecentLoads();
         } else {
           _showErrorSnackbar('Failed to delete load');
         }
@@ -554,6 +636,72 @@ class HomeController extends GetxController {
     } catch (e) {
       print('Error deleting load: $e');
       _showErrorSnackbar('Failed to delete load');
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  // Bid management methods
+  void submitBid(String loadId, double amount, String notes) async {
+    try {
+      isLoading.value = true;
+
+      final bidData = {
+        'loadId': loadId,
+        'amount': amount,
+        'notes': notes,
+        'estimatedDelivery': '2-3 days',
+        'submittedAt': DateTime.now().toIso8601String(),
+      };
+
+      final success = await FirestoreService.submitBid(bidData);
+
+      if (success) {
+        _showSuccessSnackbar('Bid submitted successfully');
+      } else {
+        _showErrorSnackbar('Failed to submit bid');
+      }
+    } catch (e) {
+      print('Error submitting bid: $e');
+      _showErrorSnackbar('Failed to submit bid');
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  void withdrawBid(String bidId) async {
+    try {
+      final confirmed = await Get.dialog<bool>(
+        AlertDialog(
+          title: const Text('Withdraw Bid'),
+          content: const Text('Are you sure you want to withdraw this bid?'),
+          actions: [
+            TextButton(
+              onPressed: () => Get.back(result: false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Get.back(result: true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Withdraw'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed == true) {
+        isLoading.value = true;
+        final success = await FirestoreService.withdrawBid(bidId);
+
+        if (success) {
+          _showSuccessSnackbar('Bid withdrawn successfully');
+        } else {
+          _showErrorSnackbar('Failed to withdraw bid');
+        }
+      }
+    } catch (e) {
+      print('Error withdrawing bid: $e');
+      _showErrorSnackbar('Failed to withdraw bid');
     } finally {
       isLoading.value = false;
     }
@@ -600,7 +748,6 @@ class HomeController extends GetxController {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            // Add filter options here
             ListTile(
               leading: const Icon(Icons.location_on),
               title: const Text('Filter by Location'),
@@ -627,9 +774,106 @@ class HomeController extends GetxController {
       ),
     );
   }
+
+  // Dashboard insights
+  void showDashboardInsights() {
+    Get.bottomSheet(
+      Container(
+        height: Get.height * 0.6,
+        padding: const EdgeInsets.all(20),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Dashboard Insights',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildInsightCard(
+                      'Load Performance',
+                      'Your loads receive an average of ${_calculateAverageBids()} bids',
+                      Icons.trending_up,
+                      Colors.blue,
+                    ),
+                    _buildInsightCard(
+                      'Success Rate',
+                      '${quickStats.value?.getSuccessRate() ?? 0}% of your loads are completed',
+                      Icons.check_circle,
+                      Colors.green,
+                    ),
+                    _buildInsightCard(
+                      'Active Engagement',
+                      'You have ${activeBids.length} active bids',
+                      Icons.gavel,
+                      Colors.orange,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInsightCard(String title, String description, IconData icon, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(description),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _calculateAverageBids() {
+    if (recentLoads.isEmpty) return 0;
+    final totalBids = recentLoads.fold<int>(0, (sum, load) => sum + load.bidsCount);
+    return (totalBids / recentLoads.length).round();
+  }
 }
 
-// Enhanced QuickStats model
+// Enhanced QuickStats model with bid support
 class QuickStats {
   final int totalShipments;
   final int activeShipments;
@@ -637,6 +881,9 @@ class QuickStats {
   final double totalSavings;
   final int monthlyShipments;
   final double averageRating;
+  final int totalLoads;
+  final int activeBids;
+  final int pendingBids;
 
   QuickStats({
     required this.totalShipments,
@@ -645,5 +892,20 @@ class QuickStats {
     required this.totalSavings,
     this.monthlyShipments = 0,
     this.averageRating = 0.0,
+    this.totalLoads = 0,
+    this.activeBids = 0,
+    this.pendingBids = 0,
   });
+
+  // Calculate success rate
+  double getSuccessRate() {
+    if (totalLoads == 0) return 0.0;
+    return (completedShipments / totalLoads) * 100;
+  }
+
+  // Calculate bid acceptance rate
+  double getBidAcceptanceRate() {
+    if (activeBids + pendingBids == 0) return 0.0;
+    return (activeBids / (activeBids + pendingBids)) * 100;
+  }
 }

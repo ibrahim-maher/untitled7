@@ -16,13 +16,13 @@ import 'widgets/home_floating_action_button.dart';
 import '../../../generated/l10n/app_localizations.dart';
 
 
+// Update your HomeView
 class HomeView extends GetView<HomeController> {
   const HomeView({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-
     final languageController = Get.find<LanguageController>();
 
     return Scaffold(
@@ -42,7 +42,7 @@ class HomeView extends GetView<HomeController> {
               SearchSection(controller: controller, l10n: l10n),
               QuickStatsSection(controller: controller, l10n: l10n),
               QuickActionsSection(controller: controller, l10n: l10n),
-              // ActiveShipmentsSection(controller: controller, l10n: l10n),
+              ActiveShipmentsSection(controller: controller, l10n: l10n),
               RecentLoadsSection(controller: controller, l10n: l10n),
               const SliverToBoxAdapter(
                 child: SizedBox(height: 100),
@@ -51,10 +51,7 @@ class HomeView extends GetView<HomeController> {
           ),
         ),
       ),
-      bottomNavigationBar: HomeBottomNavigation(
-        controller: controller,
-        l10n: l10n,
-      ),
+      // Remove bottomNavigationBar from here
       floatingActionButton: HomeFloatingActionButton(controller: controller),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );

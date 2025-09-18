@@ -4,8 +4,12 @@ import 'package:get/get.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 // Custom exception classes for better error handling
 class LocationException implements Exception {
@@ -31,12 +35,14 @@ class TimeoutException extends LocationException {
 class LocationPickerHelper {
   static Timer? _debounceTimer;
   static const Duration _debounceDuration = Duration(milliseconds: 800);
+  static final Map<String, String> _addressCache = {};
+  static const String _recentLocationsKey = 'recent_locations';
+  static const String _apiKey = 'YOUR_GOOGLE_PLACES_API_KEY'; // Add your API key here
 
   static Future<Map<String, dynamic>?> showLocationPicker(
       BuildContext context,
       bool isPickupLocation,
       ) async {
-    // Add haptic feedback
     HapticFeedback.lightImpact();
 
     return await Get.bottomSheet<Map<String, dynamic>>(
@@ -50,25 +56,44 @@ class LocationPickerHelper {
     );
   }
 
+  // New method to show Google Maps picker
+  static Future<Map<String, dynamic>?> showMapLocationPicker(
+      BuildContext context,
+      bool isPickupLocation, {
+        LatLng? initialLocation,
+      }) async {
+    HapticFeedback.lightImpact();
+
+    return await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => GoogleMapLocationPicker(
+          isPickupLocation: isPickupLocation,
+          initialLocation: initialLocation,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+  }
+
   static Future<Position?> getCurrentLocation() async {
     try {
       // Check if location services are enabled first
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        // Try to open location settings
         if (Platform.isAndroid) {
           await Geolocator.openLocationSettings();
-          // Wait a bit and check again
           await Future.delayed(const Duration(seconds: 1));
           serviceEnabled = await Geolocator.isLocationServiceEnabled();
         }
 
         if (!serviceEnabled) {
-          throw LocationServiceException('Location services are disabled. Please enable them in settings.');
+          throw LocationServiceException(
+            'Location services are disabled. Please enable them in settings.',
+          );
         }
       }
 
-      // Check location permission with more detailed handling
       LocationPermission permission = await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
@@ -84,7 +109,6 @@ class LocationPickerHelper {
         );
       }
 
-      // Get current position with timeout and fallback accuracy
       Position position;
       try {
         position = await Geolocator.getCurrentPosition(
@@ -92,7 +116,6 @@ class LocationPickerHelper {
           timeLimit: const Duration(seconds: 15),
         );
       } catch (e) {
-        // Fallback to medium accuracy if high accuracy fails
         position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.medium,
           timeLimit: const Duration(seconds: 10),
@@ -105,22 +128,17 @@ class LocationPickerHelper {
     } on LocationPermissionException {
       rethrow;
     } catch (e) {
-      print('Error getting current location: $e');
       throw LocationException('Unable to get current location: ${e.toString()}');
     }
   }
-
-  static final Map<String, String> _addressCache = {};
 
   static Future<String> getAddressFromCoordinates(
       double latitude,
       double longitude,
       ) async {
     try {
-      // Create cache key
       final cacheKey = '${latitude.toStringAsFixed(4)},${longitude.toStringAsFixed(4)}';
 
-      // Check cache first
       if (_addressCache.containsKey(cacheKey)) {
         return _addressCache[cacheKey]!;
       }
@@ -137,10 +155,8 @@ class LocationPickerHelper {
         Placemark place = placemarks[0];
         final address = _formatAddress(place);
 
-        // Cache the result
         _addressCache[cacheKey] = address;
 
-        // Limit cache size
         if (_addressCache.length > 50) {
           _addressCache.remove(_addressCache.keys.first);
         }
@@ -151,7 +167,6 @@ class LocationPickerHelper {
     } on TimeoutException {
       return 'Address lookup timeout';
     } catch (e) {
-      print('Error getting address from coordinates: $e');
       return 'Unable to get address';
     }
   }
@@ -159,7 +174,6 @@ class LocationPickerHelper {
   static String _formatAddress(Placemark place) {
     List<String> addressParts = [];
 
-    // Build address in logical order
     if (place.name != null && place.name!.isNotEmpty && place.name != place.street) {
       addressParts.add(place.name!);
     }
@@ -182,144 +196,145 @@ class LocationPickerHelper {
     return addressParts.join(', ');
   }
 
-  static Future<List<Location>> searchLocation(String query) async {
+  static Future<List<Map<String, dynamic>>> searchLocationWithAPI(String query) async {
+    if (query.trim().isEmpty) return [];
+
     try {
-      if (query.trim().isEmpty) return [];
+      // Use Google Places API if key is configured
+      if (_apiKey != 'YOUR_GOOGLE_PLACES_API_KEY') {
+        final url = Uri.parse(
+          'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${Uri.encodeComponent(query)}&key=$_apiKey&types=address',
+        );
 
-      List<Location> locations = await locationFromAddress(query).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () => throw TimeoutException('Search timeout'),
-      );
+        final response = await http.get(url).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => throw TimeoutException('Search timeout'),
+        );
 
-      return locations;
-    } on TimeoutException {
-      print('Search timeout for query: $query');
-      return [];
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final predictions = data['predictions'] as List;
+
+          List<Map<String, dynamic>> results = [];
+          for (final prediction in predictions.take(15)) {
+            results.add({
+              'address': prediction['description'],
+              'placeId': prediction['place_id'],
+              'types': prediction['types'],
+            });
+          }
+          return results;
+        }
+      }
+
+      // Fallback to geocoding search
+      return await _searchLocationLocal(query);
     } catch (e) {
-      print('Error searching location: $e');
+      // Fallback to local search on API failure
+      return await _searchLocationLocal(query);
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> _searchLocationLocal(String query) async {
+    try {
+      await Future.delayed(const Duration(milliseconds: 600));
+
+      // Use geocoding to search for locations
+      List<Location> locations = await locationFromAddress(query);
+
+      List<Map<String, dynamic>> results = [];
+
+      for (final location in locations.take(10)) {
+        try {
+          final address = await getAddressFromCoordinates(
+            location.latitude,
+            location.longitude,
+          );
+
+          results.add({
+            'address': address,
+            'lat': location.latitude,
+            'lng': location.longitude,
+            'priority': 50,
+            'category': 'Search Result',
+          });
+        } catch (e) {
+          // Skip locations that can't be reverse geocoded
+          continue;
+        }
+      }
+
+      return results;
+    } catch (e) {
+      // Return empty list if geocoding fails
       return [];
     }
   }
 
-  static List<Map<String, dynamic>> getPopularCities() {
-    return [
-      // Metro Cities
-      {'name': 'Mumbai, Maharashtra', 'lat': 19.0760, 'lng': 72.8777, 'category': 'Metro', 'state': 'Maharashtra'},
-      {'name': 'Delhi, NCR', 'lat': 28.6139, 'lng': 77.2090, 'category': 'Metro', 'state': 'Delhi'},
-      {'name': 'Bangalore, Karnataka', 'lat': 12.9716, 'lng': 77.5946, 'category': 'Metro', 'state': 'Karnataka'},
-      {'name': 'Chennai, Tamil Nadu', 'lat': 13.0827, 'lng': 80.2707, 'category': 'Metro', 'state': 'Tamil Nadu'},
-      {'name': 'Kolkata, West Bengal', 'lat': 22.5726, 'lng': 88.3639, 'category': 'Metro', 'state': 'West Bengal'},
-      {'name': 'Hyderabad, Telangana', 'lat': 17.3850, 'lng': 78.4867, 'category': 'Metro', 'state': 'Telangana'},
-
-      // Tier 1 Cities
-      {'name': 'Pune, Maharashtra', 'lat': 18.5204, 'lng': 73.8567, 'category': 'Tier 1', 'state': 'Maharashtra'},
-      {'name': 'Ahmedabad, Gujarat', 'lat': 23.0225, 'lng': 72.5714, 'category': 'Tier 1', 'state': 'Gujarat'},
-      {'name': 'Surat, Gujarat', 'lat': 21.1702, 'lng': 72.8311, 'category': 'Tier 1', 'state': 'Gujarat'},
-      {'name': 'Jaipur, Rajasthan', 'lat': 26.9124, 'lng': 75.7873, 'category': 'Tier 1', 'state': 'Rajasthan'},
-      {'name': 'Gurgaon, Haryana', 'lat': 28.4595, 'lng': 77.0266, 'category': 'Tier 1', 'state': 'Haryana'},
-      {'name': 'Noida, Uttar Pradesh', 'lat': 28.5355, 'lng': 77.3910, 'category': 'Tier 1', 'state': 'Uttar Pradesh'},
-      {'name': 'Kochi, Kerala', 'lat': 9.9312, 'lng': 76.2673, 'category': 'Tier 1', 'state': 'Kerala'},
-      {'name': 'Coimbatore, Tamil Nadu', 'lat': 11.0168, 'lng': 76.9558, 'category': 'Tier 1', 'state': 'Tamil Nadu'},
-      {'name': 'Visakhapatnam, Andhra Pradesh', 'lat': 17.6868, 'lng': 83.2185, 'category': 'Tier 1', 'state': 'Andhra Pradesh'},
-      {'name': 'Indore, Madhya Pradesh', 'lat': 22.7196, 'lng': 75.8577, 'category': 'Tier 1', 'state': 'Madhya Pradesh'},
-
-      // Tier 2 Cities
-      {'name': 'Lucknow, Uttar Pradesh', 'lat': 26.8467, 'lng': 80.9462, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Kanpur, Uttar Pradesh', 'lat': 26.4499, 'lng': 80.3319, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Nagpur, Maharashtra', 'lat': 21.1458, 'lng': 79.0882, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Thane, Maharashtra', 'lat': 19.2183, 'lng': 72.9781, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Bhopal, Madhya Pradesh', 'lat': 23.2599, 'lng': 77.4126, 'category': 'Tier 2', 'state': 'Madhya Pradesh'},
-      {'name': 'Vadodara, Gujarat', 'lat': 22.3072, 'lng': 73.1812, 'category': 'Tier 2', 'state': 'Gujarat'},
-      {'name': 'Agra, Uttar Pradesh', 'lat': 27.1767, 'lng': 78.0081, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Nashik, Maharashtra', 'lat': 19.9975, 'lng': 73.7898, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Faridabad, Haryana', 'lat': 28.4089, 'lng': 77.3178, 'category': 'Tier 2', 'state': 'Haryana'},
-      {'name': 'Meerut, Uttar Pradesh', 'lat': 28.9845, 'lng': 77.7064, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Rajkot, Gujarat', 'lat': 22.3039, 'lng': 70.8022, 'category': 'Tier 2', 'state': 'Gujarat'},
-      {'name': 'Kalyan-Dombivli, Maharashtra', 'lat': 19.2403, 'lng': 73.1305, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Vasai-Virar, Maharashtra', 'lat': 19.4912, 'lng': 72.8054, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Varanasi, Uttar Pradesh', 'lat': 25.3176, 'lng': 82.9739, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Srinagar, Jammu and Kashmir', 'lat': 34.0837, 'lng': 74.7973, 'category': 'Tier 2', 'state': 'Jammu and Kashmir'},
-      {'name': 'Aurangabad, Maharashtra', 'lat': 19.8762, 'lng': 75.3433, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Dhanbad, Jharkhand', 'lat': 23.7957, 'lng': 86.4304, 'category': 'Tier 2', 'state': 'Jharkhand'},
-      {'name': 'Amritsar, Punjab', 'lat': 31.6340, 'lng': 74.8723, 'category': 'Tier 2', 'state': 'Punjab'},
-      {'name': 'Navi Mumbai, Maharashtra', 'lat': 19.0330, 'lng': 73.0297, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Allahabad, Uttar Pradesh', 'lat': 25.4358, 'lng': 81.8463, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Ranchi, Jharkhand', 'lat': 23.3441, 'lng': 85.3096, 'category': 'Tier 2', 'state': 'Jharkhand'},
-      {'name': 'Howrah, West Bengal', 'lat': 22.5958, 'lng': 88.2636, 'category': 'Tier 2', 'state': 'West Bengal'},
-      {'name': 'Jabalpur, Madhya Pradesh', 'lat': 23.1815, 'lng': 79.9864, 'category': 'Tier 2', 'state': 'Madhya Pradesh'},
-      {'name': 'Gwalior, Madhya Pradesh', 'lat': 26.2183, 'lng': 78.1828, 'category': 'Tier 2', 'state': 'Madhya Pradesh'},
-
-      // Industrial/Port Cities
-      {'name': 'JNPT, Navi Mumbai', 'lat': 18.9647, 'lng': 72.9505, 'category': 'Port', 'state': 'Maharashtra'},
-      {'name': 'Mundra Port, Gujarat', 'lat': 22.8394, 'lng': 69.7939, 'category': 'Port', 'state': 'Gujarat'},
-      {'name': 'Chennai Port, Tamil Nadu', 'lat': 13.1067, 'lng': 80.3000, 'category': 'Port', 'state': 'Tamil Nadu'},
-      {'name': 'Kandla Port, Gujarat', 'lat': 23.0333, 'lng': 70.2167, 'category': 'Port', 'state': 'Gujarat'},
-      {'name': 'Paradip Port, Odisha', 'lat': 20.3102, 'lng': 86.6169, 'category': 'Port', 'state': 'Odisha'},
-      {'name': 'Haldia Port, West Bengal', 'lat': 22.0333, 'lng': 88.0667, 'category': 'Port', 'state': 'West Bengal'},
-
-      // Additional Important Cities
-      {'name': 'Chandigarh, Punjab', 'lat': 30.7333, 'lng': 76.7794, 'category': 'Tier 1', 'state': 'Punjab'},
-      {'name': 'Mysore, Karnataka', 'lat': 12.2958, 'lng': 76.6394, 'category': 'Tier 2', 'state': 'Karnataka'},
-      {'name': 'Bareilly, Uttar Pradesh', 'lat': 28.3670, 'lng': 79.4304, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Aligarh, Uttar Pradesh', 'lat': 27.8974, 'lng': 78.0880, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Tiruchirappalli, Tamil Nadu', 'lat': 10.7905, 'lng': 78.7047, 'category': 'Tier 2', 'state': 'Tamil Nadu'},
-      {'name': 'Bhubaneswar, Odisha', 'lat': 20.2961, 'lng': 85.8245, 'category': 'Tier 2', 'state': 'Odisha'},
-      {'name': 'Salem, Tamil Nadu', 'lat': 11.6643, 'lng': 78.1460, 'category': 'Tier 2', 'state': 'Tamil Nadu'},
-      {'name': 'Mira-Bhayandar, Maharashtra', 'lat': 19.2952, 'lng': 72.8544, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Warangal, Telangana', 'lat': 17.9669, 'lng': 79.5941, 'category': 'Tier 2', 'state': 'Telangana'},
-      {'name': 'Thiruvananthapuram, Kerala', 'lat': 8.5241, 'lng': 76.9366, 'category': 'Tier 2', 'state': 'Kerala'},
-      {'name': 'Guntur, Andhra Pradesh', 'lat': 16.3067, 'lng': 80.4365, 'category': 'Tier 2', 'state': 'Andhra Pradesh'},
-      {'name': 'Bhiwandi, Maharashtra', 'lat': 19.3002, 'lng': 73.0636, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Saharanpur, Uttar Pradesh', 'lat': 29.9680, 'lng': 77.5552, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Gorakhpur, Uttar Pradesh', 'lat': 26.7606, 'lng': 83.3732, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Bikaner, Rajasthan', 'lat': 28.0229, 'lng': 73.3119, 'category': 'Tier 2', 'state': 'Rajasthan'},
-      {'name': 'Amravati, Maharashtra', 'lat': 20.9374, 'lng': 77.7796, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Noida Extension, Uttar Pradesh', 'lat': 28.4743, 'lng': 77.5022, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Jamshedpur, Jharkhand', 'lat': 22.8046, 'lng': 86.2029, 'category': 'Tier 2', 'state': 'Jharkhand'},
-      {'name': 'Bhilai, Chhattisgarh', 'lat': 21.1938, 'lng': 81.3509, 'category': 'Tier 2', 'state': 'Chhattisgarh'},
-      {'name': 'Cuttack, Odisha', 'lat': 20.4625, 'lng': 85.8828, 'category': 'Tier 2', 'state': 'Odisha'},
-      {'name': 'Firozabad, Uttar Pradesh', 'lat': 27.1591, 'lng': 78.3957, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Kota, Rajasthan', 'lat': 25.2138, 'lng': 75.8648, 'category': 'Tier 2', 'state': 'Rajasthan'},
-      {'name': 'Bhavnagar, Gujarat', 'lat': 21.7645, 'lng': 72.1519, 'category': 'Tier 2', 'state': 'Gujarat'},
-      {'name': 'Dehradun, Uttarakhand', 'lat': 30.3165, 'lng': 78.0322, 'category': 'Tier 2', 'state': 'Uttarakhand'},
-      {'name': 'Durgapur, West Bengal', 'lat': 23.5204, 'lng': 87.3119, 'category': 'Tier 2', 'state': 'West Bengal'},
-      {'name': 'Asansol, West Bengal', 'lat': 23.6739, 'lng': 86.9524, 'category': 'Tier 2', 'state': 'West Bengal'},
-      {'name': 'Rourkela, Odisha', 'lat': 22.2604, 'lng': 84.8536, 'category': 'Tier 2', 'state': 'Odisha'},
-      {'name': 'Nanded, Maharashtra', 'lat': 19.1383, 'lng': 77.3210, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Kolhapur, Maharashtra', 'lat': 16.7050, 'lng': 74.2433, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Ajmer, Rajasthan', 'lat': 26.4499, 'lng': 74.6399, 'category': 'Tier 2', 'state': 'Rajasthan'},
-      {'name': 'Akola, Maharashtra', 'lat': 20.7002, 'lng': 77.0082, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Gulbarga, Karnataka', 'lat': 17.3297, 'lng': 76.8343, 'category': 'Tier 2', 'state': 'Karnataka'},
-      {'name': 'Jamnagar, Gujarat', 'lat': 22.4707, 'lng': 70.0577, 'category': 'Tier 2', 'state': 'Gujarat'},
-      {'name': 'Ujjain, Madhya Pradesh', 'lat': 23.1765, 'lng': 75.7885, 'category': 'Tier 2', 'state': 'Madhya Pradesh'},
-      {'name': 'Loni, Uttar Pradesh', 'lat': 28.7333, 'lng': 77.2833, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Siliguri, West Bengal', 'lat': 26.7271, 'lng': 88.3953, 'category': 'Tier 2', 'state': 'West Bengal'},
-      {'name': 'Jhansi, Uttar Pradesh', 'lat': 25.4484, 'lng': 78.5685, 'category': 'Tier 2', 'state': 'Uttar Pradesh'},
-      {'name': 'Ulhasnagar, Maharashtra', 'lat': 19.2215, 'lng': 73.1645, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Jammu, Jammu and Kashmir', 'lat': 32.7266, 'lng': 74.8570, 'category': 'Tier 2', 'state': 'Jammu and Kashmir'},
-      {'name': 'Sangli-Miraj & Kupwad, Maharashtra', 'lat': 16.8524, 'lng': 74.5815, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Mangalore, Karnataka', 'lat': 12.9141, 'lng': 74.8560, 'category': 'Tier 2', 'state': 'Karnataka'},
-      {'name': 'Erode, Tamil Nadu', 'lat': 11.3410, 'lng': 77.7172, 'category': 'Tier 2', 'state': 'Tamil Nadu'},
-      {'name': 'Belgaum, Karnataka', 'lat': 15.8497, 'lng': 74.4977, 'category': 'Tier 2', 'state': 'Karnataka'},
-      {'name': 'Ambattur, Tamil Nadu', 'lat': 13.1143, 'lng': 80.1548, 'category': 'Tier 2', 'state': 'Tamil Nadu'},
-      {'name': 'Tirunelveli, Tamil Nadu', 'lat': 8.7139, 'lng': 77.7567, 'category': 'Tier 2', 'state': 'Tamil Nadu'},
-      {'name': 'Malegaon, Maharashtra', 'lat': 20.5579, 'lng': 74.5287, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Gaya, Bihar', 'lat': 24.7914, 'lng': 85.0002, 'category': 'Tier 2', 'state': 'Bihar'},
-      {'name': 'Jalgaon, Maharashtra', 'lat': 21.0077, 'lng': 75.5626, 'category': 'Tier 2', 'state': 'Maharashtra'},
-      {'name': 'Udaipur, Rajasthan', 'lat': 24.5854, 'lng': 73.7125, 'category': 'Tier 2', 'state': 'Rajasthan'},
-      {'name': 'Maheshtala, West Bengal', 'lat': 22.5048, 'lng': 88.2482, 'category': 'Tier 2', 'state': 'West Bengal'},
-    ];
+  static Future<List<String>> getRecentLocations() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final recentLocations = prefs.getStringList(_recentLocationsKey) ?? [];
+      return recentLocations;
+    } catch (e) {
+      return [];
+    }
   }
 
-  static List<String> getRecentLocations() {
-    // In production, this would come from SharedPreferences or Hive
-    return [
-      'Mumbai Central, Mumbai',
-      'Andheri East, Mumbai',
-      'Electronic City, Bangalore',
-      'Gurgaon Sector 44, Gurgaon',
-      'Noida Sector 62, Noida',
-    ];
+  static Future<void> saveRecentLocation(String location) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> recentLocations = prefs.getStringList(_recentLocationsKey) ?? [];
+
+      // Remove if already exists
+      recentLocations.remove(location);
+
+      // Add to beginning
+      recentLocations.insert(0, location);
+
+      // Keep only last 10
+      if (recentLocations.length > 10) {
+        recentLocations = recentLocations.take(10).toList();
+      }
+
+      await prefs.setStringList(_recentLocationsKey, recentLocations);
+    } catch (e) {
+      // Ignore errors in saving recent locations
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getLocationDetails(String placeId) async {
+    if (_apiKey == 'YOUR_GOOGLE_PLACES_API_KEY') return null;
+
+    try {
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$_apiKey&fields=geometry,formatted_address',
+      );
+
+      final response = await http.get(url).timeout(
+        const Duration(seconds: 10),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final result = data['result'];
+
+        if (result != null) {
+          final geometry = result['geometry'];
+          final location = geometry['location'];
+
+          return {
+            'address': result['formatted_address'],
+            'lat': location['lat'],
+            'lng': location['lng'],
+          };
+        }
+      }
+    } catch (e) {
+      // Return null on error
+    }
+
+    return null;
   }
 
   static Future<bool> checkLocationPermission() async {
@@ -327,7 +342,6 @@ class LocationPickerHelper {
       final status = await Permission.location.status;
       return status == PermissionStatus.granted;
     } catch (e) {
-      print('Error checking location permission: $e');
       return false;
     }
   }
@@ -336,7 +350,6 @@ class LocationPickerHelper {
     try {
       return await Permission.location.request();
     } catch (e) {
-      print('Error requesting location permission: $e');
       return PermissionStatus.denied;
     }
   }
@@ -370,7 +383,7 @@ class LocationPickerHelper {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'FreightX needs location access to:',
+              'FreightFlow needs location access to:',
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 12),
@@ -540,6 +553,7 @@ class LocationPickerHelper {
   }
 }
 
+// Enhanced Location Picker Bottom Sheet with Map Option
 class LocationPickerBottomSheet extends StatefulWidget {
   final bool isPickupLocation;
 
@@ -559,7 +573,8 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
-  List<String> _searchResults = [];
+  List<Map<String, dynamic>> _searchResults = [];
+  List<String> _recentLocations = [];
   bool _isSearching = false;
   bool _isGettingCurrentLocation = false;
   String? _errorMessage;
@@ -568,6 +583,7 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _loadRecentLocations();
 
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -594,6 +610,13 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
     super.dispose();
   }
 
+  Future<void> _loadRecentLocations() async {
+    final recent = await LocationPickerHelper.getRecentLocations();
+    setState(() {
+      _recentLocations = recent;
+    });
+  }
+
   void _onSearchChanged() {
     final query = _searchController.text.trim();
 
@@ -611,10 +634,7 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
       _errorMessage = null;
     });
 
-    // Cancel previous timer
     LocationPickerHelper._debounceTimer?.cancel();
-
-    // Start new timer
     LocationPickerHelper._debounceTimer = Timer(
       LocationPickerHelper._debounceDuration,
           () => _performSearch(query),
@@ -625,7 +645,7 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
     if (!mounted || query.trim().isEmpty) return;
 
     try {
-      final results = await _simulateLocationSearch(query);
+      final results = await LocationPickerHelper.searchLocationWithAPI(query);
 
       if (mounted) {
         setState(() {
@@ -645,148 +665,21 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
     }
   }
 
-  Future<List<String>> _simulateLocationSearch(String query) async {
-    // Simulate network delay
-    await Future.delayed(const Duration(milliseconds: 600));
-
-    final popularCities = LocationPickerHelper.getPopularCities();
-    final queryLower = query.toLowerCase().trim();
-
-    // Multi-tier search algorithm
-    List<Map<String, dynamic>> prioritizedResults = [];
-
-    for (final city in popularCities) {
-      final cityName = city['name']! as String;
-      final cityLower = cityName.toLowerCase();
-      final state = city['state']! as String;
-      final stateLower = state.toLowerCase();
-
-      int priority = 0;
-
-      // Exact match gets highest priority
-      if (cityLower.startsWith(queryLower)) {
-        priority = 100;
-      }
-      // City name contains query
-      else if (cityLower.contains(queryLower)) {
-        priority = 80;
-      }
-      // State name contains query
-      else if (stateLower.contains(queryLower)) {
-        priority = 60;
-      }
-      // Fuzzy match on individual words
-      else if (_advancedFuzzyMatch(cityName, query)) {
-        priority = 40;
-      }
-      // Port/Metro priority boost
-      if (city['category'] == 'Metro') {
-        priority += 20;
-      } else if (city['category'] == 'Port') {
-        priority += 15;
-      } else if (city['category'] == 'Tier 1') {
-        priority += 10;
-      }
-
-      if (priority > 0) {
-        prioritizedResults.add({
-          'city': cityName,
-          'priority': priority,
-        });
-      }
-    }
-
-    // Sort by priority and return top results
-    prioritizedResults.sort((a, b) => b['priority'].compareTo(a['priority']));
-
-    return prioritizedResults
-        .take(10)
-        .map((result) => result['city'] as String)
-        .toList();
-  }
-
-  bool _fuzzyMatch(String cityName, String query) {
-    return _advancedFuzzyMatch(cityName, query);
-  }
-
-  bool _advancedFuzzyMatch(String cityName, String query) {
-    final city = cityName.toLowerCase();
-    final q = query.toLowerCase();
-
-    // Split into words for better matching
-    final cityWords = city.split(RegExp(r'[,\s]+'));
-    final queryWords = q.split(RegExp(r'[,\s]+'));
-
-    // Check if any word in city starts with any word in query
-    for (final queryWord in queryWords) {
-      if (queryWord.length >= 2) {
-        for (final cityWord in cityWords) {
-          if (cityWord.startsWith(queryWord)) {
-            return true;
-          }
-
-          // Check for common abbreviations
-          if (_checkAbbreviations(cityWord, queryWord)) {
-            return true;
-          }
-
-          // Check for phonetic similarity
-          if (_checkPhoneticSimilarity(cityWord, queryWord)) {
-            return true;
-          }
-        }
-      }
-    }
-
-    return false;
-  }
-
-  bool _checkAbbreviations(String cityWord, String queryWord) {
-    // Common city abbreviations
-    final abbreviations = {
-      'mumbai': ['bom', 'mum'],
-      'delhi': ['del', 'ndl'],
-      'bangalore': ['blr', 'bang'],
-      'chennai': ['mad', 'che'],
-      'kolkata': ['cal', 'ccu'],
-      'hyderabad': ['hyd'],
-      'ahmedabad': ['amd'],
-      'coimbatore': ['cbe'],
-      'thiruvananthapuram': ['tvm'],
-      'visakhapatnam': ['viz'],
-      'bhubaneswar': ['bbs'],
-    };
-
-    final cityAbbrevs = abbreviations[cityWord];
-    return cityAbbrevs?.contains(queryWord) ?? false;
-  }
-
-  bool _checkPhoneticSimilarity(String cityWord, String queryWord) {
-    if (queryWord.length < 3) return false;
-
-    // Simple phonetic matching for common variations
-    final phoneticMap = {
-      'ph': 'f',
-      'th': 't',
-      'ch': 'c',
-      'kh': 'k',
-      'gh': 'g',
-    };
-
-    String normalizedCity = cityWord;
-    String normalizedQuery = queryWord;
-
-    phoneticMap.forEach((from, to) {
-      normalizedCity = normalizedCity.replaceAll(from, to);
-      normalizedQuery = normalizedQuery.replaceAll(from, to);
-    });
-
-    return normalizedCity.startsWith(normalizedQuery) ||
-        normalizedCity.contains(normalizedQuery);
-  }
-
-  void _selectLocation(String address, {double? lat, double? lng}) {
+  void _selectLocation(String address, {double? lat, double? lng, String? placeId}) async {
     HapticFeedback.selectionClick();
+
+    // If we have a placeId but no coordinates, get details from API
+    if (placeId != null && lat == null && lng == null) {
+      final details = await LocationPickerHelper.getLocationDetails(placeId);
+      if (details != null) {
+        lat = details['lat'];
+        lng = details['lng'];
+        address = details['address'] ?? address;
+      }
+    }
+
+    // Save to recent locations
+    await LocationPickerHelper.saveRecentLocation(address);
 
     final locationData = {
       'address': address,
@@ -847,12 +740,37 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
     }
   }
 
+  void _openMapPicker() async {
+    HapticFeedback.lightImpact();
+
+    // Get current location as initial position for the map
+    LatLng? initialLocation;
+    try {
+      final position = await LocationPickerHelper.getCurrentLocation();
+      if (position != null) {
+        initialLocation = LatLng(position.latitude, position.longitude);
+      }
+    } catch (e) {
+      // Use default location if can't get current location
+      initialLocation = const LatLng(20.5937, 78.9629); // Center of India
+    }
+
+    final result = await LocationPickerHelper.showMapLocationPicker(
+      context,
+      widget.isPickupLocation,
+      initialLocation: initialLocation,
+    );
+
+    if (result != null) {
+      Navigator.pop(context, result);
+    }
+  }
+
   void _showError(String message) {
     setState(() {
       _errorMessage = message;
     });
 
-    // Auto clear error after 5 seconds
     Timer(const Duration(seconds: 5), () {
       if (mounted) {
         setState(() {
@@ -1021,47 +939,103 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
 
             const SizedBox(height: 16),
 
-            // Current location option
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 24),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Theme.of(context).primaryColor.withOpacity(0.2),
-                ),
-              ),
-              child: ListTile(
-                leading: _isGettingCurrentLocation
-                    ? Container(
-                  width: 24,
-                  height: 24,
-                  padding: const EdgeInsets.all(2),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      Theme.of(context).primaryColor,
+            // Quick action buttons
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  // Current location option
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).primaryColor.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Theme.of(context).primaryColor.withOpacity(0.2),
+                        ),
+                      ),
+                      child: InkWell(
+                        onTap: _isGettingCurrentLocation ? null : _useCurrentLocation,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                          child: Column(
+                            children: [
+                              _isGettingCurrentLocation
+                                  ? Container(
+                                width: 24,
+                                height: 24,
+                                padding: const EdgeInsets.all(2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Theme.of(context).primaryColor,
+                                  ),
+                                ),
+                              )
+                                  : Icon(
+                                Icons.my_location,
+                                color: Theme.of(context).primaryColor,
+                                size: 24,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Current\nLocation',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                )
-                    : Icon(
-                  Icons.my_location,
-                  color: Theme.of(context).primaryColor,
-                ),
-                title: Text(
-                  'Use Current Location',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).primaryColor,
+
+                  const SizedBox(width: 12),
+
+                  // Map picker option
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.green[200]!,
+                        ),
+                      ),
+                      child: InkWell(
+                        onTap: _openMapPicker,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.map,
+                                color: Colors.green[600],
+                                size: 24,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Select on\nMap',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.green[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                subtitle: const Text('Get your location automatically'),
-                trailing: Icon(
-                  Icons.arrow_forward_ios,
-                  size: 16,
-                  color: Theme.of(context).primaryColor,
-                ),
-                onTap: _isGettingCurrentLocation ? null : _useCurrentLocation,
+                ],
               ),
             ),
 
@@ -1084,18 +1058,25 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
         itemCount: _searchResults.length,
         separatorBuilder: (context, index) => const Divider(height: 1),
         itemBuilder: (context, index) {
-          final location = _searchResults[index];
+          final result = _searchResults[index];
           return _buildLocationTile(
-            location,
+            result['address'] ?? '',
             Icons.location_on,
-            'Search Result',
-            onTap: () => _selectLocation(location),
+            result['category'] ?? 'Location',
+            onTap: () => _selectLocation(
+              result['address'] ?? '',
+              lat: result['lat'],
+              lng: result['lng'],
+              placeId: result['placeId'],
+            ),
           );
         },
       );
     }
 
-    if (_searchController.text.isNotEmpty && _searchResults.isEmpty && !_isSearching) {
+    if (_searchController.text.isNotEmpty &&
+        _searchResults.isEmpty &&
+        !_isSearching) {
       return _buildEmptyState(
         Icons.search_off,
         'No locations found',
@@ -1107,17 +1088,17 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
       return _buildLoadingState();
     }
 
-    // Show popular cities and recent locations
+    // Show only recent locations
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Recent locations
-          if (LocationPickerHelper.getRecentLocations().isNotEmpty) ...[
+          if (_recentLocations.isNotEmpty) ...[
             _buildSectionHeader('Recent Locations', Icons.history),
             const SizedBox(height: 8),
-            ...LocationPickerHelper.getRecentLocations().map(
+            ..._recentLocations.map(
                   (location) => _buildLocationTile(
                 location,
                 Icons.history,
@@ -1126,24 +1107,15 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
               ),
             ),
             const SizedBox(height: 24),
-          ],
-
-          // Popular cities
-          _buildSectionHeader('Popular Cities', Icons.location_city),
-          const SizedBox(height: 8),
-          ...LocationPickerHelper.getPopularCities().take(12).map(
-                (cityData) => _buildLocationTile(
-              cityData['name']! as String,
-              Icons.location_city,
-              cityData['category']! as String,
-              onTap: () => _selectLocation(
-                cityData['name']! as String,
-                lat: cityData['lat'] as double,
-                lng: cityData['lng'] as double,
-              ),
+          ] else ...[
+            // Empty state for no recent locations
+            const SizedBox(height: 40),
+            _buildEmptyState(
+              Icons.history,
+              'No recent locations',
+              'Start searching for locations or use current location to build your history',
             ),
-          ),
-          const SizedBox(height: 24),
+          ],
         ],
       ),
     );
@@ -1300,6 +1272,361 @@ class _LocationPickerBottomSheetState extends State<LocationPickerBottomSheet>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// Google Maps Location Picker Widget
+class GoogleMapLocationPicker extends StatefulWidget {
+  final bool isPickupLocation;
+  final LatLng? initialLocation;
+
+  const GoogleMapLocationPicker({
+    Key? key,
+    required this.isPickupLocation,
+    this.initialLocation,
+  }) : super(key: key);
+
+  @override
+  State<GoogleMapLocationPicker> createState() => _GoogleMapLocationPickerState();
+}
+
+class _GoogleMapLocationPickerState extends State<GoogleMapLocationPicker> {
+  GoogleMapController? _mapController;
+  LatLng _selectedLocation = const LatLng(20.5937, 78.9629); // Default to center of India
+  String _selectedAddress = 'Select location on map';
+  bool _isLoadingAddress = false;
+  bool _isConfirming = false;
+  final Set<Marker> _markers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialLocation != null) {
+      _selectedLocation = widget.initialLocation!;
+      _updateAddress(_selectedLocation);
+    }
+    _updateMarker();
+  }
+
+  void _onMapCreated(GoogleMapController controller) {
+    _mapController = controller;
+  }
+
+  void _onMapTap(LatLng location) {
+    setState(() {
+      _selectedLocation = location;
+      _updateMarker();
+    });
+    _updateAddress(location);
+  }
+
+  void _updateMarker() {
+    _markers.clear();
+    _markers.add(
+      Marker(
+        markerId: const MarkerId('selected_location'),
+        position: _selectedLocation,
+        draggable: true,
+        onDragEnd: (LatLng newPosition) {
+          setState(() {
+            _selectedLocation = newPosition;
+          });
+          _updateAddress(newPosition);
+        },
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          widget.isPickupLocation ? BitmapDescriptor.hueGreen : BitmapDescriptor.hueRed,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _updateAddress(LatLng location) async {
+    setState(() {
+      _isLoadingAddress = true;
+    });
+
+    try {
+      final address = await LocationPickerHelper.getAddressFromCoordinates(
+        location.latitude,
+        location.longitude,
+      );
+
+      if (mounted) {
+        setState(() {
+          _selectedAddress = address;
+          _isLoadingAddress = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _selectedAddress = 'Unknown location';
+          _isLoadingAddress = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      final position = await LocationPickerHelper.getCurrentLocation();
+      if (position != null) {
+        final newLocation = LatLng(position.latitude, position.longitude);
+        setState(() {
+          _selectedLocation = newLocation;
+          _updateMarker();
+        });
+
+        _mapController?.animateCamera(
+          CameraUpdate.newLatLngZoom(newLocation, 16),
+        );
+
+        _updateAddress(newLocation);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to get current location: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmLocation() async {
+    setState(() {
+      _isConfirming = true;
+    });
+
+    try {
+      // Save to recent locations
+      await LocationPickerHelper.saveRecentLocation(_selectedAddress);
+
+      final locationData = {
+        'address': _selectedAddress,
+        'coordinates': {
+          'lat': _selectedLocation.latitude,
+          'lng': _selectedLocation.longitude,
+        },
+        'isPickup': widget.isPickupLocation,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'source': 'map',
+      };
+
+      Navigator.pop(context, locationData);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to confirm location: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isConfirming = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.isPickupLocation ? 'Select Pickup Location' : 'Select Delivery Location',
+        ),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        actions: [
+          TextButton.icon(
+            onPressed: _getCurrentLocation,
+            icon: const Icon(Icons.my_location, size: 20),
+            label: const Text('My Location'),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).primaryColor,
+            ),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          // Google Map
+          GoogleMap(
+            onMapCreated: _onMapCreated,
+            initialCameraPosition: CameraPosition(
+              target: _selectedLocation,
+              zoom: 15,
+            ),
+            onTap: _onMapTap,
+            markers: _markers,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+            compassEnabled: true,
+            trafficEnabled: false,
+            buildingsEnabled: true,
+            indoorViewEnabled: true,
+            mapType: MapType.normal,
+          ),
+
+          // Address display panel
+          Positioned(
+            top: 16,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    widget.isPickupLocation ? Icons.location_on : Icons.location_on,
+                    color: widget.isPickupLocation ? Colors.green : Colors.red,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.isPickupLocation ? 'Pickup Location' : 'Delivery Location',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        if (_isLoadingAddress)
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Theme.of(context).primaryColor,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text('Getting address...'),
+                            ],
+                          )
+                        else
+                          Text(
+                            _selectedAddress,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Confirm button
+          Positioned(
+            bottom: 32,
+            left: 24,
+            right: 24,
+            child: ElevatedButton(
+              onPressed: _isConfirming ? null : _confirmLocation,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 8,
+              ),
+              child: _isConfirming
+                  ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text('Confirming...'),
+                ],
+              )
+                  : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check, size: 20),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Confirm Location',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Instructions card
+          Positioned(
+            bottom: 120,
+            left: 24,
+            right: 24,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info, color: Colors.blue[600], size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Tap on the map or drag the marker to select your location',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

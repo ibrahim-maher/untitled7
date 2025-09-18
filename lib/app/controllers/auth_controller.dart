@@ -153,7 +153,7 @@ class AuthController extends GetxController {
         // Auth state listener will handle the rest
         await Future.delayed(const Duration(milliseconds: 500)); // Allow state to update
 
-        Get.offAllNamed(Routes.HOME);
+        Get.offAllNamed(Routes.MAIN);
         _showSuccess('Login successful! Welcome back.');
 
         print('AuthController: Login process completed successfully');
@@ -211,7 +211,7 @@ class AuthController extends GetxController {
         // Update Firebase user profile
         await credential.user!.updateDisplayName(name);
 
-        Get.offAllNamed(Routes.HOME);
+        Get.offAllNamed(Routes.MAIN);
         _showSuccess('Registration successful! Welcome to our app.');
 
         print('AuthController: Registration process completed successfully');

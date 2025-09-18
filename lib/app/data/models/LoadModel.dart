@@ -31,6 +31,9 @@ class LoadModel {
   final List<String> images; // URLs to load images
   final bool isActive;
 
+  // NEW: Added missing fields for UI compatibility
+  final int viewCount;
+
   LoadModel({
     required this.id,
     required this.userId,
@@ -61,6 +64,7 @@ class LoadModel {
     this.specialInstructions,
     this.images = const [],
     this.isActive = true,
+    this.viewCount = 0, // NEW
   });
 
   Map<String, dynamic> toMap() {
@@ -76,7 +80,8 @@ class LoadModel {
       'vehicleType': vehicleType.toString(),
       'budget': budget,
       'pickupDate': Timestamp.fromDate(pickupDate),
-      'deliveryDate': deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
+      'deliveryDate':
+          deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
       'status': status.toString(),
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
@@ -94,8 +99,10 @@ class LoadModel {
       'specialInstructions': specialInstructions,
       'images': images,
       'isActive': isActive,
+      'viewCount': viewCount, // NEW
     };
   }
+
 
   factory LoadModel.fromMap(Map<String, dynamic> map) {
     return LoadModel(
@@ -115,18 +122,15 @@ class LoadModel {
         orElse: () => VehicleType.truck,
       ),
       budget: (map['budget'] ?? 0).toDouble(),
-      pickupDate: (map['pickupDate'] as Timestamp).toDate(),
-      deliveryDate: map['deliveryDate'] != null
-          ? (map['deliveryDate'] as Timestamp).toDate()
-          : null,
+      // ROBUST parsing for all timestamp formats
+      pickupDate: _parseDateTime(map['pickupDate']),
+      deliveryDate: _parseNullableDateTime(map['deliveryDate']),
       status: LoadStatus.values.firstWhere(
             (e) => e.toString() == map['status'],
         orElse: () => LoadStatus.posted,
       ),
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
-      updatedAt: map['updatedAt'] != null
-          ? (map['updatedAt'] as Timestamp).toDate()
-          : null,
+      createdAt: _parseDateTime(map['createdAt']),
+      updatedAt: _parseNullableDateTime(map['updatedAt']),
       bidsCount: map['bidsCount'] ?? 0,
       description: map['description'],
       requirements: List<String>.from(map['requirements'] ?? []),
@@ -145,8 +149,10 @@ class LoadModel {
       specialInstructions: map['specialInstructions'],
       images: List<String>.from(map['images'] ?? []),
       isActive: map['isActive'] ?? true,
+      viewCount: map['viewCount'] ?? 0,
     );
   }
+
 
   LoadModel copyWith({
     String? id,
@@ -178,6 +184,7 @@ class LoadModel {
     String? specialInstructions,
     List<String>? images,
     bool? isActive,
+    int? viewCount, // NEW
   }) {
     return LoadModel(
       id: id ?? this.id,
@@ -209,9 +216,45 @@ class LoadModel {
       specialInstructions: specialInstructions ?? this.specialInstructions,
       images: images ?? this.images,
       isActive: isActive ?? this.isActive,
+      viewCount: viewCount ?? this.viewCount, // NEW
     );
   }
+
+// Helper methods for robust timestamp parsing
+  static DateTime _parseDateTime(dynamic value) {
+    if (value == null) return DateTime.now();
+
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    if (value is String) {
+      try {
+        return DateTime.parse(value);
+      } catch (e) {
+        print('Error parsing date string: $value');
+        return DateTime.now();
+      }
+    }
+
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+
+    if (value is DateTime) {
+      return value;
+    }
+
+    return DateTime.now();
+  }
+
+  static DateTime? _parseNullableDateTime(dynamic value) {
+    if (value == null) return null;
+    return _parseDateTime(value);
+  }
 }
+
+
 
 // Enums
 enum ShipmentStatus {
@@ -307,16 +350,20 @@ class TrackingUpdate {
     };
   }
 
+// And fix TrackingUpdate.fromMap
   factory TrackingUpdate.fromMap(Map<String, dynamic> map) {
     return TrackingUpdate(
       id: map['id'] ?? '',
       status: ShipmentStatus.values.firstWhere(
-            (e) => e.toString() == map['status'],
+        (e) => e.toString() == map['status'],
         orElse: () => ShipmentStatus.pending,
       ),
       location: map['location'] ?? '',
       description: map['description'] ?? '',
-      timestamp: (map['timestamp'] as Timestamp).toDate(),
+      // FIXED: Check for null before casting
+      timestamp: map['timestamp'] != null
+          ? (map['timestamp'] as Timestamp).toDate()
+          : DateTime.now(),
       coordinates: map['coordinates'] != null
           ? Map<String, double>.from(map['coordinates'])
           : null,
@@ -409,10 +456,15 @@ class ShipmentModel {
       'driverPhotoUrl': driverPhotoUrl,
       'vehicleNumber': vehicleNumber,
       'vehicleType': vehicleType,
-      'estimatedPickup': estimatedPickup != null ? Timestamp.fromDate(estimatedPickup!) : null,
-      'actualPickup': actualPickup != null ? Timestamp.fromDate(actualPickup!) : null,
-      'estimatedDelivery': estimatedDelivery != null ? Timestamp.fromDate(estimatedDelivery!) : null,
-      'actualDelivery': actualDelivery != null ? Timestamp.fromDate(actualDelivery!) : null,
+      'estimatedPickup':
+          estimatedPickup != null ? Timestamp.fromDate(estimatedPickup!) : null,
+      'actualPickup':
+          actualPickup != null ? Timestamp.fromDate(actualPickup!) : null,
+      'estimatedDelivery': estimatedDelivery != null
+          ? Timestamp.fromDate(estimatedDelivery!)
+          : null,
+      'actualDelivery':
+          actualDelivery != null ? Timestamp.fromDate(actualDelivery!) : null,
       'trackingUpdates': trackingUpdates.map((e) => e.toMap()).toList(),
       'totalAmount': totalAmount,
       'paymentStatus': paymentStatus.toString(),
@@ -432,6 +484,7 @@ class ShipmentModel {
     };
   }
 
+// And fix ShipmentModel.fromMap
   factory ShipmentModel.fromMap(Map<String, dynamic> map) {
     return ShipmentModel(
       id: map['id'] ?? '',
@@ -439,7 +492,7 @@ class ShipmentModel {
       userId: map['userId'] ?? '',
       transporterId: map['transporterId'] ?? '',
       status: ShipmentStatus.values.firstWhere(
-            (e) => e.toString() == map['status'],
+        (e) => e.toString() == map['status'],
         orElse: () => ShipmentStatus.pending,
       ),
       pickupLocation: map['pickupLocation'] ?? '',
@@ -462,17 +515,20 @@ class ShipmentModel {
           ? (map['actualDelivery'] as Timestamp).toDate()
           : null,
       trackingUpdates: (map['trackingUpdates'] as List<dynamic>?)
-          ?.map((e) => TrackingUpdate.fromMap(e as Map<String, dynamic>))
-          .toList() ??
+              ?.map((e) => TrackingUpdate.fromMap(e as Map<String, dynamic>))
+              .toList() ??
           [],
       totalAmount: (map['totalAmount'] ?? 0).toDouble(),
       paymentStatus: PaymentStatus.values.firstWhere(
-            (e) => e.toString() == map['paymentStatus'],
+        (e) => e.toString() == map['paymentStatus'],
         orElse: () => PaymentStatus.pending,
       ),
       notes: map['notes'],
       documents: List<String>.from(map['documents'] ?? []),
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
+      // FIXED: Check for null before casting
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
       updatedAt: map['updatedAt'] != null
           ? (map['updatedAt'] as Timestamp).toDate()
           : null,
@@ -515,6 +571,19 @@ class BidModel {
   final String? rejectionReason;
   final bool isCounterOffer;
   final String? additionalServices; // Insurance, loading/unloading, etc.
+
+  // NEW: Added for controller compatibility
+  double get amount => bidAmount; // Alias for bidAmount
+  double get rating => transporterRating; // Alias for transporterRating
+  DateTime get submittedAt => createdAt; // Alias for createdAt
+  String get transporterPhone =>
+      ''; // Default empty string (add to model if needed)
+
+  static int _daysDifference(DateTime from, DateTime to) {
+    from = DateTime(from.year, from.month, from.day);
+    to = DateTime(to.year, to.month, to.day);
+    return (to.difference(from).inHours / 24).round();
+  }
 
   BidModel({
     required this.id,
@@ -570,6 +639,7 @@ class BidModel {
     };
   }
 
+// Similarly, fix BidModel.fromMap
   factory BidModel.fromMap(Map<String, dynamic> map) {
     return BidModel(
       id: map['id'] ?? '',
@@ -580,14 +650,22 @@ class BidModel {
       bidAmount: (map['bidAmount'] ?? 0).toDouble(),
       vehicleType: map['vehicleType'] ?? '',
       vehicleNumber: map['vehicleNumber'] ?? '',
-      estimatedPickup: (map['estimatedPickup'] as Timestamp).toDate(),
-      estimatedDelivery: (map['estimatedDelivery'] as Timestamp).toDate(),
+      // FIXED: Check for null before casting
+      estimatedPickup: map['estimatedPickup'] != null
+          ? (map['estimatedPickup'] as Timestamp).toDate()
+          : DateTime.now(),
+      estimatedDelivery: map['estimatedDelivery'] != null
+          ? (map['estimatedDelivery'] as Timestamp).toDate()
+          : DateTime.now(),
       status: BidStatus.values.firstWhere(
-            (e) => e.toString() == map['status'],
+        (e) => e.toString() == map['status'],
         orElse: () => BidStatus.pending,
       ),
       notes: map['notes'],
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
+      // FIXED: Check for null before casting
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
       updatedAt: map['updatedAt'] != null
           ? (map['updatedAt'] as Timestamp).toDate()
           : null,
@@ -600,6 +678,59 @@ class BidModel {
       rejectionReason: map['rejectionReason'],
       isCounterOffer: map['isCounterOffer'] ?? false,
       additionalServices: map['additionalServices'],
+    );
+  }
+
+  // NEW: Added copyWith method for controller compatibility
+  BidModel copyWith({
+    String? id,
+    String? loadId,
+    String? transporterId,
+    String? transporterName,
+    String? transporterPhotoUrl,
+    double? bidAmount,
+    String? vehicleType,
+    String? vehicleNumber,
+    DateTime? estimatedPickup,
+    DateTime? estimatedDelivery,
+    BidStatus? status,
+    String? notes,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    double? transporterRating,
+    int? completedTrips,
+    List<String>? vehiclePhotos,
+    String? licenseNumber,
+    String? insuranceDetails,
+    double? negotiatedAmount,
+    String? rejectionReason,
+    bool? isCounterOffer,
+    String? additionalServices,
+  }) {
+    return BidModel(
+      id: id ?? this.id,
+      loadId: loadId ?? this.loadId,
+      transporterId: transporterId ?? this.transporterId,
+      transporterName: transporterName ?? this.transporterName,
+      transporterPhotoUrl: transporterPhotoUrl ?? this.transporterPhotoUrl,
+      bidAmount: bidAmount ?? this.bidAmount,
+      vehicleType: vehicleType ?? this.vehicleType,
+      vehicleNumber: vehicleNumber ?? this.vehicleNumber,
+      estimatedPickup: estimatedPickup ?? this.estimatedPickup,
+      estimatedDelivery: estimatedDelivery ?? this.estimatedDelivery,
+      status: status ?? this.status,
+      notes: notes ?? this.notes,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      transporterRating: transporterRating ?? this.transporterRating,
+      completedTrips: completedTrips ?? this.completedTrips,
+      vehiclePhotos: vehiclePhotos ?? this.vehiclePhotos,
+      licenseNumber: licenseNumber ?? this.licenseNumber,
+      insuranceDetails: insuranceDetails ?? this.insuranceDetails,
+      negotiatedAmount: negotiatedAmount ?? this.negotiatedAmount,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
+      isCounterOffer: isCounterOffer ?? this.isCounterOffer,
+      additionalServices: additionalServices ?? this.additionalServices,
     );
   }
 }
@@ -689,7 +820,7 @@ class UserModelExtended {
           ? (map['updatedAt'] as Timestamp).toDate()
           : null,
       userType: UserType.values.firstWhere(
-            (e) => e.toString() == map['userType'],
+        (e) => e.toString() == map['userType'],
         orElse: () => UserType.customer,
       ),
       phoneNumber: map['phoneNumber'],
@@ -753,9 +884,10 @@ enum LoadStatus {
   inProgress,
   completed,
   cancelled,
-  expired, draft, active,
+  expired,
+  draft,
+  active,
 }
-
 
 enum BidStatus {
   pending,
@@ -765,8 +897,6 @@ enum BidStatus {
   expired,
   negotiating,
 }
-
-
 
 enum UserType {
   customer,
@@ -846,6 +976,41 @@ extension LoadTypeExtension on LoadType {
         return '📄';
     }
   }
+
+  String get description {
+    switch (this) {
+      case LoadType.general:
+        return 'Standard goods and materials';
+      case LoadType.electronics:
+        return 'Electronic items requiring careful handling';
+      case LoadType.furniture:
+        return 'Furniture and home appliances';
+      case LoadType.automotive:
+        return 'Vehicle parts and accessories';
+      case LoadType.food:
+        return 'Food products and beverages';
+      case LoadType.pharmaceutical:
+        return 'Medical and pharmaceutical products';
+      case LoadType.textile:
+        return 'Clothing and fabric materials';
+      case LoadType.chemical:
+        return 'Chemical products (non-hazardous)';
+      case LoadType.construction:
+        return 'Building and construction materials';
+      case LoadType.agriculture:
+        return 'Agricultural and farming products';
+      case LoadType.hazardous:
+        return 'Hazardous materials (special permits required)';
+      case LoadType.fragile:
+        return 'Delicate items requiring extra care';
+      case LoadType.refrigerated:
+        return 'Temperature-controlled goods';
+      case LoadType.liquid:
+        return 'Liquid materials and beverages';
+      case LoadType.documents:
+        return 'Important documents and papers';
+    }
+  }
 }
 
 extension VehicleTypeExtension on VehicleType {
@@ -906,6 +1071,64 @@ extension VehicleTypeExtension on VehicleType {
         return '🚛🌊';
     }
   }
+
+  String get capacity {
+    switch (this) {
+      case VehicleType.miniTruck:
+        return 'Up to 1 ton';
+      case VehicleType.truck:
+        return '1-10 tons';
+      case VehicleType.lorry:
+        return '5-15 tons';
+      case VehicleType.container:
+        return '10-25 tons';
+      case VehicleType.trailer:
+        return '15-40 tons';
+      case VehicleType.tempo:
+        return 'Up to 1.5 tons';
+      case VehicleType.pickup:
+        return 'Up to 0.5 tons';
+      case VehicleType.bike:
+        return 'Up to 50 kg';
+      case VehicleType.auto:
+        return 'Up to 200 kg';
+      case VehicleType.van:
+        return 'Up to 1 ton';
+      case VehicleType.refrigeratedTruck:
+        return '2-10 tons (temperature controlled)';
+      case VehicleType.tanker:
+        return '5-20 tons (liquid transport)';
+    }
+  }
+
+  double get maxWeight {
+    switch (this) {
+      case VehicleType.miniTruck:
+        return 1000;
+      case VehicleType.truck:
+        return 10000;
+      case VehicleType.lorry:
+        return 15000;
+      case VehicleType.container:
+        return 25000;
+      case VehicleType.trailer:
+        return 40000;
+      case VehicleType.tempo:
+        return 1500;
+      case VehicleType.pickup:
+        return 500;
+      case VehicleType.bike:
+        return 50;
+      case VehicleType.auto:
+        return 200;
+      case VehicleType.van:
+        return 1000;
+      case VehicleType.refrigeratedTruck:
+        return 10000;
+      case VehicleType.tanker:
+        return 20000;
+    }
+  }
 }
 
 extension LoadStatusExtension on LoadStatus {
@@ -926,16 +1149,12 @@ extension LoadStatusExtension on LoadStatus {
       case LoadStatus.expired:
         return 'Expired';
       case LoadStatus.draft:
-        // TODO: Handle this case.
-        throw UnimplementedError();
+        return 'Draft';
       case LoadStatus.active:
-        // TODO: Handle this case.
-        throw UnimplementedError();
+        return 'Active';
     }
   }
 }
-
-
 
 class LocationModel {
   final String id;
@@ -976,7 +1195,7 @@ class LocationModel {
       longitude: (map['longitude'] ?? 0.0).toDouble(),
       formattedAddress: map['formattedAddress'],
       type: LocationType.values.firstWhere(
-            (e) => e.toString() == map['type'],
+        (e) => e.toString() == map['type'],
         orElse: () => LocationType.custom,
       ),
       lastUsed: map['lastUsed'] != null
@@ -1127,7 +1346,8 @@ class LocationSearchResult {
     );
   }
 
-  String get displayText => fullText.isNotEmpty ? fullText : '$mainText, $secondaryText';
+  String get displayText =>
+      fullText.isNotEmpty ? fullText : '$mainText, $secondaryText';
 }
 
 class LocationBounds {

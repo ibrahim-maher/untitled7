@@ -21,7 +21,6 @@ class FirestoreService {
   static const String ratingsCollection = 'ratings';
   static const String driversCollection = 'drivers';
 
-
   // User operations
   static Future<UserModel?> getCurrentUser() async {
     try {
@@ -135,6 +134,11 @@ class FirestoreService {
     }
   }
 
+  // NEW: Added missing method
+  static Future<LoadModel?> getLoad(String loadId) async {
+    return await getLoadById(loadId);
+  }
+
   static Future<LoadModel?> getLoadById(String loadId) async {
     try {
       final doc = await _firestore
@@ -161,6 +165,23 @@ class FirestoreService {
       return true;
     } catch (e) {
       print('Error updating load: $e');
+      return false;
+    }
+  }
+
+  // NEW: Added missing method
+  static Future<bool> updateLoadStatus(String loadId, LoadStatus status) async {
+    try {
+      await _firestore
+          .collection(loadsCollection)
+          .doc(loadId)
+          .update({
+        'status': status.toString(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    } catch (e) {
+      print('Error updating load status: $e');
       return false;
     }
   }
@@ -277,6 +298,52 @@ class FirestoreService {
     }
   }
 
+  // NEW: Added method for submitting bids with Map data
+  static Future<bool> submitBid(Map<String, dynamic> bidData) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return false;
+
+      final bid = BidModel(
+        id: '',
+        loadId: bidData['loadId'],
+        transporterId: user.uid,
+        transporterName: user.displayName ?? 'Unknown',
+        bidAmount: bidData['amount'].toDouble(),
+        vehicleType: bidData['vehicleType'] ?? 'Truck',
+        vehicleNumber: bidData['vehicleNumber'] ?? '',
+        estimatedPickup: DateTime.now().add(const Duration(days: 1)),
+        estimatedDelivery: DateTime.now().add(const Duration(days: 3)),
+        status: BidStatus.pending,
+        notes: bidData['notes'] ?? '',
+        createdAt: DateTime.now(),
+      );
+
+      final bidId = await createBid(bid);
+      return bidId != null;
+    } catch (e) {
+      print('Error submitting bid: $e');
+      return false;
+    }
+  }
+
+  // NEW: Added method for withdrawing bids
+  static Future<bool> withdrawBid(String bidId) async {
+    try {
+      await _firestore
+          .collection(bidsCollection)
+          .doc(bidId)
+          .update({
+        'status': BidStatus.cancelled.toString(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    } catch (e) {
+      print('Error withdrawing bid: $e');
+      return false;
+    }
+  }
+
   static Future<List<BidModel>> getLoadBids(String loadId) async {
     try {
       final snapshot = await _firestore
@@ -311,6 +378,28 @@ class FirestoreService {
           .toList();
     } catch (e) {
       print('Error getting user bids: $e');
+      return [];
+    }
+  }
+
+  // NEW: Get active bids for user
+  static Future<List<BidModel>> getActiveBids() async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return [];
+
+      final snapshot = await _firestore
+          .collection(bidsCollection)
+          .where('transporterId', isEqualTo: user.uid)
+          .where('status', isEqualTo: BidStatus.pending.toString())
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => BidModel.fromMap(doc.data()))
+          .toList();
+    } catch (e) {
+      print('Error getting active bids: $e');
       return [];
     }
   }
@@ -361,6 +450,22 @@ class FirestoreService {
     }
   }
 
+  // NEW: Accept bid with loadId lookup
+  static Future<bool> acceptBidById(String bidId) async {
+    try {
+      final bidDoc = await _firestore.collection(bidsCollection).doc(bidId).get();
+      if (!bidDoc.exists) return false;
+
+      final bidData = bidDoc.data()!;
+      final loadId = bidData['loadId'];
+
+      return await acceptBid(bidId, loadId);
+    } catch (e) {
+      print('Error accepting bid by ID: $e');
+      return false;
+    }
+  }
+
   static Future<bool> rejectBid(String bidId) async {
     try {
       await _firestore
@@ -374,6 +479,24 @@ class FirestoreService {
     } catch (e) {
       print('Error rejecting bid: $e');
       return false;
+    }
+  }
+
+  // NEW: Get load analytics
+  static Future<LoadAnalytics?> getLoadAnalytics(String loadId) async {
+    try {
+      // This would typically come from an analytics collection
+      // For now, return mock data
+      return LoadAnalytics(
+        views: 45,
+        shares: 3,
+        inquiries: 8,
+        avgBidAmount: 35000.0,
+        lastViewed: DateTime.now().subtract(const Duration(hours: 2)),
+      );
+    } catch (e) {
+      print('Error getting load analytics: $e');
+      return null;
     }
   }
 
@@ -439,6 +562,26 @@ class FirestoreService {
           .where('status', isEqualTo: ShipmentStatus.delivered.toString())
           .get();
 
+      // Get total loads
+      final totalLoadsSnapshot = await _firestore
+          .collection(loadsCollection)
+          .where('userId', isEqualTo: user.uid)
+          .get();
+
+      // Get active bids
+      final activeBidsSnapshot = await _firestore
+          .collection(bidsCollection)
+          .where('transporterId', isEqualTo: user.uid)
+          .where('status', isEqualTo: BidStatus.pending.toString())
+          .get();
+
+      // Get pending bids
+      final pendingBidsSnapshot = await _firestore
+          .collection(bidsCollection)
+          .where('transporterId', isEqualTo: user.uid)
+          .where('status', isEqualTo: BidStatus.pending.toString())
+          .get();
+
       // Get monthly expenses (simplified - you might want to calculate this differently)
       final monthlyPaymentsSnapshot = await _firestore
           .collection(paymentsCollection)
@@ -460,6 +603,9 @@ class FirestoreService {
         'totalSavings': totalSavings,
         'monthlyShipments': 0, // You can add more specific calculations
         'averageRating': 4.5, // Calculate from feedback collection
+        'totalLoads': totalLoadsSnapshot.size, // NEW
+        'activeBids': activeBidsSnapshot.size, // NEW
+        'pendingBids': pendingBidsSnapshot.size, // NEW
       };
     } catch (e) {
       print('Error getting user stats: $e');
@@ -579,6 +725,35 @@ class FirestoreService {
         snapshot.docs.map((doc) => ShipmentModel.fromMap(doc.data())).toList());
   }
 
+  // NEW: Get active bids stream
+  static Stream<List<BidModel>> getActiveBidsStream() {
+    final user = _auth.currentUser;
+    if (user == null) return Stream.value([]);
+
+    return _firestore
+        .collection(bidsCollection)
+        .where('transporterId', isEqualTo: user.uid)
+        .where('status', isEqualTo: BidStatus.pending.toString())
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) =>
+        snapshot.docs.map((doc) => BidModel.fromMap(doc.data())).toList());
+  }
+
+  // NEW: Get load stream
+  static Stream<LoadModel?> getLoadStream(String loadId) {
+    return _firestore
+        .collection(loadsCollection)
+        .doc(loadId)
+        .snapshots()
+        .map((doc) {
+      if (doc.exists) {
+        return LoadModel.fromMap(doc.data()!);
+      }
+      return null;
+    });
+  }
+
   static Stream<List<BidModel>> getLoadBidsStream(String loadId) {
     return _firestore
         .collection(bidsCollection)
@@ -681,6 +856,7 @@ class FirestoreService {
       };
     }
   }
+
   static Future<bool> updateDriverRating(String driverId, double newRating) async {
     try {
       // Get current driver data
@@ -748,6 +924,7 @@ class FirestoreService {
       return false;
     }
   }
+
   static Stream<List<ShipmentModel>> getUserShipmentsStream() {
     final user = _auth.currentUser;
     if (user == null) return Stream.value([]);
@@ -776,5 +953,31 @@ class FirestoreService {
       return false;
     }
   }
+}
 
+// NEW: LoadAnalytics model for analytics data
+class LoadAnalytics {
+  final int views;
+  final int shares;
+  final int inquiries;
+  final double avgBidAmount;
+  final DateTime lastViewed;
+
+  LoadAnalytics({
+    required this.views,
+    required this.shares,
+    required this.inquiries,
+    required this.avgBidAmount,
+    required this.lastViewed,
+  });
+
+  factory LoadAnalytics.fromMap(Map<String, dynamic> map) {
+    return LoadAnalytics(
+      views: map['views'] ?? 0,
+      shares: map['shares'] ?? 0,
+      inquiries: map['inquiries'] ?? 0,
+      avgBidAmount: (map['avgBidAmount'] ?? 0).toDouble(),
+      lastViewed: DateTime.fromMillisecondsSinceEpoch(map['lastViewed'] ?? 0),
+    );
+  }
 }

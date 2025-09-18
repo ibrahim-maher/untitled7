@@ -2,6 +2,7 @@ part of 'app_pages.dart';
 
 abstract class Routes {
   Routes._();
+  static const MAIN = _Paths.MAIN;
 
   // Core routes
   static const SPLASH = _Paths.SPLASH;
@@ -17,6 +18,8 @@ abstract class Routes {
   static const LOAD_DETAILS = _Paths.LOAD_DETAILS;
   static const EDIT_LOAD = _Paths.EDIT_LOAD;
   static const LOAD_HISTORY = _Paths.LOAD_HISTORY;
+  static const AVAILABLE_LOADS = _Paths.AVAILABLE_LOADS; // NEW
+  static const MY_BIDS = _Paths.MY_BIDS; // NEW
 
   // Shipment routes
   static const SHIPMENTS = _Paths.SHIPMENTS;
@@ -57,6 +60,7 @@ abstract class Routes {
 
 abstract class _Paths {
   _Paths._();
+  static const MAIN = '/main';
 
   // Core paths
   static const SPLASH = '/splash';
@@ -72,6 +76,8 @@ abstract class _Paths {
   static const LOAD_DETAILS = '/load-details';
   static const EDIT_LOAD = '/edit-load';
   static const LOAD_HISTORY = '/load-history';
+  static const AVAILABLE_LOADS = '/available-loads'; // NEW
+  static const MY_BIDS = '/my-bids'; // NEW
 
   // Shipment paths
   static const SHIPMENTS = '/shipments';

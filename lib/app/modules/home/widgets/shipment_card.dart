@@ -5,6 +5,7 @@ import '../../../data/models/LoadModel.dart';
 import '../../../controllers/home_controller.dart';
 import '../utils/date_formatter.dart';
 import '../utils/status_color_helper.dart';
+import '../../../../generated/l10n/app_localizations.dart';
 
 class ShipmentCard extends StatelessWidget {
   final ShipmentModel shipment;
@@ -18,6 +19,8 @@ class ShipmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
@@ -36,7 +39,7 @@ class ShipmentCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'Shipment #${shipment.id.substring(0, 8)}',
+                      '${l10n.shipment} #${shipment.id.substring(0, 8)}',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                         color: Theme.of(context).colorScheme.onSurface,
@@ -132,7 +135,7 @@ class ShipmentCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      'ETA: ${DateFormatter.formatDateTime(shipment.estimatedDelivery!)}',
+                      '${l10n.eta}: ${DateFormatter.formatDateTime(shipment.estimatedDelivery!)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
@@ -141,7 +144,7 @@ class ShipmentCard extends StatelessWidget {
                     TextButton(
                       onPressed: () => Get.find<HomeController>().navigateToTrackShipment(shipment.id),
                       child: Text(
-                        'Track',
+                        l10n.track,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.primary,
                         ),
